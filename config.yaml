@@ -1,0 +1,33 @@
+# Основной файл конфигурации
+# Замените параметры на актуальные для вашего окружения
+database:
+  postgres:
+    host: "postgres"
+    port: 5432
+    user: "myuser"
+    password: "mypass"
+    database: "mydb"
+kafka:
+  bootstrap_servers:
+    - "kafka:9092"
+aggregator:
+  keywords: "machine learning"
+  useNewsAPI: true
+services:
+  newsapi:
+    apiKey: "YOUR_NEWSAPI_KEY"
+ads:
+  ssp:
+    port: 3002
+    maxBids: 2
+    maxTimeoutMs: 1500
+    dspEndpoints:
+      - "http://dsp:8080/openrtb2/auction"
+dsp:
+  port: 8080
+  bidderURL: "http://bidder:8090"
+bidder:
+  port: 8090
+  defaultCpm: 0.5
+website:
+  port: 3001
