@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>My Content Website</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="css/bootstrap.min.css" />
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="#">MyContentProject</a>
+    </div>
+</nav>
+
+<main class="container mt-4">
+    <h1>Статьи</h1>
+    <ul id="articles"></ul>
+
+    <hr>
+    <h2>Рекламный блок (пример)</h2>
+    <p>Можно разместить JavaScript, который дергает /ssp/auction</p>
+</main>
+
+<script src="js/bootstrap.bundle.min.js"></script>
+<script>
+    fetch('/api/articles')
+        .then(r => r.json())
+        .then(data => {
+            const list = document.getElementById('articles');
+            data.forEach(item => {
+                const li = document.createElement('li');
+                li.innerHTML = `<b>${item.title}</b> <small>[${item.created_at}]</small><br>${item.content}`;
+                list.appendChild(li);
+            });
+        });
+</script>
+</body>
+</html>

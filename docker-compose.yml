@@ -2,14 +2,15 @@ version: "3.8"
 services:
   zookeeper:
     image: bitnami/zookeeper:latest
+    container_name: zookeeper
     environment:
-      - ZOO_ENABLE_AUTH=no
       - ALLOW_ANONYMOUS_LOGIN=yes
     ports:
       - "2181:2181"
 
   kafka:
     image: bitnami/kafka:latest
+    container_name: kafka
     depends_on:
       - zookeeper
     environment:
@@ -21,35 +22,41 @@ services:
 
   postgres:
     image: postgres:15
+    container_name: postgres
     environment:
-      POSTGRES_DB: mydb
-      POSTGRES_USER: myuser
-      POSTGRES_PASSWORD: mypass
+      - POSTGRES_DB=mydb
+      - POSTGRES_USER=myuser
+      - POSTGRES_PASSWORD=mypass
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-    # Можно скопировать init_postgres.sql в /docker-entrypoint-initdb.d
+      - ./db/init_postgres.sql:/docker-entrypoint-initdb.d/init_postgres.sql
 
   clickhouse:
     image: clickhouse/clickhouse-server:23
+    container_name: clickhouse
     ports:
       - "8123:8123"
       - "9000:9000"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+  # При необходимости mount'им init_clickhouse.sql вручную
 
   aggregator:
     build: ./aggregator
+    container_name: aggregator
     depends_on:
-      - kafka
       - postgres
-    environment:
-      - PYTHONUNBUFFERED=1
-    # Запускать можно вручную (cron), либо в виде постоянного контейнера
+      - kafka
+    # Здесь aggregator можно запускать вручную при необходимости
+    # или всегда (например, собирает контент 1 раз при старте).
+    # Если хотите cron-like поведение, можете не запускать его постоянно.
+    # command: ["sleep", "3600"]  # заглушка вместо постоянного цикла
 
   bidder:
     build: ./bidder
+    container_name: bidder
     depends_on:
       - kafka
     ports:
@@ -57,6 +64,7 @@ services:
 
   dsp:
     build: ./dsp
+    container_name: dsp
     depends_on:
       - bidder
       - kafka
@@ -65,6 +73,7 @@ services:
 
   ssp:
     build: ./ssp
+    container_name: ssp
     depends_on:
       - dsp
       - kafka
@@ -73,6 +82,7 @@ services:
 
   website:
     build: ./website
+    container_name: website
     depends_on:
       - postgres
       - kafka

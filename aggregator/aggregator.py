@@ -1,13 +1,12 @@
+#!/usr/bin/env python3
 # aggregator.py
-# -*- coding: utf-8 -*-
 
 import os
 import json
-import time
 import datetime
+import requests
 import psycopg2
 import yaml
-import requests
 from kafka import KafkaProducer
 
 def load_config():
@@ -24,17 +23,16 @@ def connect_postgres(pg_conf):
     )
 
 def init_kafka_producer(kafka_conf):
-    producer = KafkaProducer(
+    return KafkaProducer(
         bootstrap_servers=kafka_conf["bootstrap_servers"],
-        value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode("utf-8")
+        value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
-    return producer
 
 def log_to_kafka(producer, service, level, message):
     event = {
         "timestamp": datetime.datetime.utcnow().isoformat(),
         "service": service,
-        "level": level,
+        "level": level.upper(),
         "message": message
     }
     producer.send("service-logs", value=event)
@@ -48,9 +46,9 @@ def fetch_newsapi_articles(api_key, query):
         "apiKey": api_key
     }
     try:
-        r = requests.get(url, params=params)
-        r.raise_for_status()
-        data = r.json()
+        resp = requests.get(url, params=params)
+        resp.raise_for_status()
+        data = resp.json()
         return data.get("articles", [])
     except Exception as e:
         print(f"Error fetching NewsAPI: {e}")
@@ -73,22 +71,21 @@ def main():
     kafka_conf = config["kafka"]
     aggregator_conf = config["aggregator"]
 
-    pg_conn = connect_postgres(pg_conf)
+    conn = connect_postgres(pg_conf)
     producer = init_kafka_producer(kafka_conf)
 
     log_to_kafka(producer, "aggregator", "INFO", "Aggregator started")
 
     keywords = aggregator_conf.get("keywords", "technology")
-    if aggregator_conf.get("useNewsAPI", True):
-        newsapi_key = config["services"]["newsapi"]["apiKey"]
-        articles = fetch_newsapi_articles(newsapi_key, keywords)
-
+    if aggregator_conf.get("useNewsAPI", False):
+        api_key = config["services"]["newsapi"]["apiKey"]
+        articles = fetch_newsapi_articles(api_key, keywords)
         for art in articles:
             title = art.get("title", "No title")
             description = art.get("description", "")
             url = art.get("url", "")
-            article_id = insert_article(pg_conn, title, description, url)
-            log_to_kafka(producer, "aggregator", "DEBUG", f"Inserted article with id={article_id}")
+            article_id = insert_article(conn, title, description, url)
+            log_to_kafka(producer, "aggregator", "DEBUG", f"Inserted article id={article_id}")
 
     # Дополнительно можно прописать fetch_reddit_rss, fetch_bing и прочие источники
 
@@ -96,7 +93,7 @@ def main():
 
     producer.flush()
     producer.close()
-    pg_conn.close()
+    conn.close()
 
 if __name__ == "__main__":
     main()

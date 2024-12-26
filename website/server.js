@@ -1,15 +1,22 @@
-// website/server.js
 "use strict";
+
 const express = require("express");
 const { Pool } = require("pg");
 const { Kafka } = require("kafkajs");
+const path = require("path");
+const fs = require("fs");
+const yaml = require("js-yaml");
+
+function loadConfig() {
+    const filePath = path.join(__dirname, "..", "config.yaml");
+    const data = fs.readFileSync(filePath, "utf8");
+    return yaml.load(data);
+}
+
+const config = loadConfig();
 
 const app = express();
-app.use(express.static(__dirname + "/public")); // Раздача статических файлов
-
-const config = require("../config.json");
-// Допустим, мы отдельно храним часть конфигурации,
-// либо читаем config.yaml через yaml-parse
+app.use(express.static(path.join(__dirname, "public")));
 
 const pool = new Pool({
     host: config.database.postgres.host,
@@ -35,22 +42,22 @@ function logToKafka(level, message) {
     const event = {
         timestamp: new Date().toISOString(),
         service: "website",
-        level: level,
-        message: message
+        level,
+        message
     };
-    producer.send({
-        topic: "service-logs",
-        messages: [
-            { value: JSON.stringify(event) }
-        ]
-    }).catch(e => console.error("Kafka send error:", e));
+    producer
+        .send({
+            topic: "service-logs",
+            messages: [{ value: JSON.stringify(event) }]
+        })
+        .catch(e => console.error("Kafka send error:", e));
 }
 
-// Пример эндпоинта, который возвращает список статей
+// API для получения статей
 app.get("/api/articles", async (req, res) => {
     try {
         logToKafka("INFO", "GET /api/articles");
-        const { rows } = await pool.query("SELECT id, title, content, source_url FROM articles ORDER BY id DESC LIMIT 50");
+        const { rows } = await pool.query("SELECT id, title, content, source_url, created_at FROM articles ORDER BY id DESC LIMIT 50");
         res.json(rows);
     } catch (err) {
         logToKafka("ERROR", "Failed to get articles: " + err.message);
@@ -60,16 +67,19 @@ app.get("/api/articles", async (req, res) => {
 
 // Главная страница
 app.get("/", (req, res) => {
-    res.sendFile(__dirname + "/public/index.html");
+    res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// Запуск
 const port = config.website.port || 3001;
-initKafka().then(() => {
-    app.listen(port, () => {
-        console.log(`Website is running on http://localhost:${port}`);
+
+initKafka()
+    .then(() => {
+        app.listen(port, () => {
+            console.log(`Website is running on http://localhost:${port}`);
+            logToKafka("INFO", `Website started on port ${port}`);
+        });
+    })
+    .catch(err => {
+        console.error("Failed to init Kafka:", err);
+        process.exit(1);
     });
-}).catch(err => {
-    console.error("Failed to init Kafka:", err);
-    process.exit(1);
-});

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"fmt"
+	"gopkg.in/yaml.v3"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 )
 
 type Config struct {
@@ -16,7 +19,7 @@ type Config struct {
 	} `yaml:"dsp"`
 
 	Kafka struct {
-		Brokers []string `yaml:"bootstrap_servers"`
+		BootstrapServers []string `yaml:"bootstrap_servers"`
 	} `yaml:"kafka"`
 }
 
@@ -39,7 +42,7 @@ func loadConfig() {
 func initKafkaProducer() {
 	cfg := sarama.NewConfig()
 	cfg.Producer.Return.Successes = true
-	p, err := sarama.NewSyncProducer(dspConfig.Kafka.Brokers, cfg)
+	p, err := sarama.NewSyncProducer(dspConfig.Kafka.BootstrapServers, cfg)
 	if err != nil {
 		log.Fatalf("Failed to start Kafka producer: %v", err)
 	}
@@ -47,10 +50,15 @@ func initKafkaProducer() {
 }
 
 func logToKafka(service, level, message string) {
-	// Аналогично Bidder
+	now := time.Now().UTC().Format(time.RFC3339)
+	msgValue := fmt.Sprintf(
+		`{"timestamp":"%s","service":"%s","level":"%s","message":"%s"}`,
+		now, service, level, message)
+	producer.SendMessage(&sarama.ProducerMessage{
+		Topic: "service-logs",
+		Value: sarama.StringEncoder(msgValue),
+	})
 }
-
-// dspHandler в dsp_handler.go (см. ниже)
 
 func main() {
 	loadConfig()

@@ -3,13 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 )
 
 type Config struct {
@@ -19,7 +20,7 @@ type Config struct {
 	} `yaml:"bidder"`
 
 	Kafka struct {
-		Brokers []string `yaml:"bootstrap_servers"`
+		BootstrapServers []string `yaml:"bootstrap_servers"`
 	} `yaml:"kafka"`
 }
 
@@ -46,7 +47,7 @@ func loadConfig() {
 func initKafkaProducer() {
 	cfg := sarama.NewConfig()
 	cfg.Producer.Return.Successes = true
-	p, err := sarama.NewSyncProducer(appConfig.Kafka.Brokers, cfg)
+	p, err := sarama.NewSyncProducer(appConfig.Kafka.BootstrapServers, cfg)
 	if err != nil {
 		log.Fatalf("Failed to start Kafka producer: %v", err)
 	}

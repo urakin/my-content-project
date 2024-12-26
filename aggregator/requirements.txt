@@ -1,0 +1,4 @@
+requests==2.31.0
+psycopg2==2.9.6
+PyYAML==6.0
+kafka-python==2.0.2

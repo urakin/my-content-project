@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -71,14 +72,14 @@ func dspHandler(w http.ResponseWriter, r *http.Request) {
 
 	logToKafka("dsp", "INFO", "Received OpenRTB request: "+bidReq.ID)
 
-	cpm, err := getBidFromBidder(dspConfig.Dsp.BidderURL)
+	cpm, err := getCpmFromBidder(dspConfig.Dsp.BidderURL)
 	if err != nil {
 		logToKafka("dsp", "ERROR", "Failed to get cpm from Bidder: "+err.Error())
 		http.Error(w, "Internal Error", http.StatusInternalServerError)
 		return
 	}
 
-	adm := `<div>My Ad</div>`
+	adm := `<div style="border:1px solid #ccc; padding:10px;">DSP Ad</div>`
 	var bids []Bid
 	for _, imp := range bidReq.Imp {
 		bids = append(bids, Bid{
@@ -100,9 +101,10 @@ func dspHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(respData)
+	logToKafka("dsp", "INFO", fmt.Sprintf("Responded with CPM=%.2f", cpm))
 }
 
-func getBidFromBidder(bidderURL string) (float64, error) {
+func getCpmFromBidder(bidderURL string) (float64, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(bidderURL + "/getBid")
 	if err != nil {
@@ -111,7 +113,7 @@ func getBidFromBidder(bidderURL string) (float64, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, err
+		return 0, fmt.Errorf("bidder returned status %d", resp.StatusCode)
 	}
 
 	var bResp BidderResponse

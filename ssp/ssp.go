@@ -12,7 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
@@ -26,7 +27,7 @@ type Config struct {
 	} `yaml:"ads"`
 
 	Kafka struct {
-		Brokers []string `yaml:"bootstrap_servers"`
+		BootstrapServers []string `yaml:"bootstrap_servers"`
 	} `yaml:"kafka"`
 }
 
@@ -87,7 +88,7 @@ func initKafkaProducer() {
 	cfg := sarama.NewConfig()
 	cfg.Producer.Return.Successes = true
 
-	p, err := sarama.NewSyncProducer(sspConfig.Kafka.Brokers, cfg)
+	p, err := sarama.NewSyncProducer(sspConfig.Kafka.BootstrapServers, cfg)
 	if err != nil {
 		log.Fatalf("Failed to init Kafka producer: %v", err)
 	}
@@ -98,14 +99,26 @@ func logToKafka(service, level, message string) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	msgValue := fmt.Sprintf(`{"timestamp":"%s","service":"%s","level":"%s","message":"%s"}`,
 		now, service, level, message)
-	msg := &sarama.ProducerMessage{
+	_, _, err := producer.SendMessage(&sarama.ProducerMessage{
 		Topic: "service-logs",
 		Value: sarama.StringEncoder(msgValue),
-	}
-	_, _, err := producer.SendMessage(msg)
+	})
 	if err != nil {
 		log.Printf("Kafka send error: %v", err)
 	}
+}
+
+func main() {
+	loadConfig()
+	initKafkaProducer()
+	logToKafka("ssp", "INFO", "SSP service started")
+
+	http.HandleFunc("/ssp/auction", sspAuctionHandler)
+
+	port := sspConfig.Ads.Ssp.Port
+	addr := ":" + strconv.Itoa(port)
+	log.Printf("SSP listening on %s\n", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
 func sspAuctionHandler(w http.ResponseWriter, r *http.Request) {
@@ -114,25 +127,27 @@ func sspAuctionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var bidReq OpenRTBBidRequest
-	body, err := ioReadAllN(r)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		logToKafka("ssp", "ERROR", "Failed to read request body")
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
+	defer r.Body.Close()
 
+	var bidReq OpenRTBBidRequest
 	if err := json.Unmarshal(body, &bidReq); err != nil {
-		logToKafka("ssp", "ERROR", "Invalid JSON in request: "+string(body))
+		logToKafka("ssp", "ERROR", "Invalid JSON in request")
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
 	logToKafka("ssp", "INFO", "Received auction request: "+bidReq.ID)
-	dspResponses := getResponsesFromDSP(bidReq)
-	allBids := gatherBids(dspResponses)
 
-	// Сортируем по цене (убывание)
+	dspResponses := getBidsFromAllDSP(bidReq)
+	allBids := gatherAllBids(dspResponses)
+
+	// Сортируем по Price (убывание)
 	for i := 0; i < len(allBids); i++ {
 		for j := i + 1; j < len(allBids); j++ {
 			if allBids[j].Price > allBids[i].Price {
@@ -147,44 +162,43 @@ func sspAuctionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	finalResp := OpenRTBBidResponse{
-		ID: bidReq.ID,
-		SeatB: []SeatBid{
-			{Bid: allBids},
-		},
-		Cur: "USD",
+		ID:    bidReq.ID,
+		SeatB: []SeatBid{{Bid: allBids}},
+		Cur:   "USD",
 	}
 
 	respData, _ := json.Marshal(finalResp)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(respData)
+	logToKafka("ssp", "INFO", fmt.Sprintf("Auction response with %d bids", len(allBids)))
 }
 
-func getResponsesFromDSP(req OpenRTBBidRequest) []OpenRTBBidResponse {
+func getBidsFromAllDSP(bidReq OpenRTBBidRequest) []OpenRTBBidResponse {
 	dspList := sspConfig.Ads.Ssp.DspEndpoints
 	var wg sync.WaitGroup
 	wg.Add(len(dspList))
 
-	results := make(chan *OpenRTBBidResponse, len(dspList))
+	ch := make(chan *OpenRTBBidResponse, len(dspList))
 
 	for _, dspURL := range dspList {
 		go func(url string) {
 			defer wg.Done()
-			resp := sendOpenRtbRequest(url, req)
-			results <- resp
+			resp := sendOpenRtbRequest(url, bidReq)
+			ch <- resp
 		}(dspURL)
 	}
 
 	wg.Wait()
-	close(results)
+	close(ch)
 
-	var out []OpenRTBBidResponse
-	for r := range results {
+	var responses []OpenRTBBidResponse
+	for r := range ch {
 		if r != nil {
-			out = append(out, *r)
+			responses = append(responses, *r)
 		}
 	}
-	return out
+	return responses
 }
 
 func sendOpenRtbRequest(url string, bidReq OpenRTBBidRequest) *OpenRTBBidResponse {
@@ -197,7 +211,7 @@ func sendOpenRtbRequest(url string, bidReq OpenRTBBidRequest) *OpenRTBBidRespons
 	client := &http.Client{Timeout: time.Duration(sspConfig.Ads.Ssp.MaxTimeoutMs) * time.Millisecond}
 	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
 	if err != nil {
-		logToKafka("ssp", "ERROR", "Failed to create POST request: "+err.Error())
+		logToKafka("ssp", "ERROR", "Failed to create DSP POST request: "+err.Error())
 		return nil
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -214,7 +228,7 @@ func sendOpenRtbRequest(url string, bidReq OpenRTBBidRequest) *OpenRTBBidRespons
 		return nil
 	}
 
-	body, err := ioReadAll(resp)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logToKafka("ssp", "ERROR", "Failed to read DSP response: "+err.Error())
 		return nil
@@ -229,7 +243,7 @@ func sendOpenRtbRequest(url string, bidReq OpenRTBBidRequest) *OpenRTBBidRespons
 	return &dspResp
 }
 
-func gatherBids(dspResponses []OpenRTBBidResponse) []Bid {
+func gatherAllBids(dspResponses []OpenRTBBidResponse) []Bid {
 	var all []Bid
 	for _, r := range dspResponses {
 		for _, seat := range r.SeatB {
